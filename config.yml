@@ -1,0 +1,11 @@
+hosts:
+
+  #myhost:
+  #  username: myuser
+  #  password: mypass
+
+defaults:
+    username: bernie
+    password: itsjustbernie!
+    port: 15672
+    ttl: 45

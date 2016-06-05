@@ -1,0 +1,233 @@
+#!/usr/bin/env python
+
+
+import yaml, os, sys, requests, argparse, json, urllib, time, sqlite3, logging, datetime
+
+
+def cacheConnect():
+    try:
+        return sqlite3.connect('%s/zabbix-rabbitmq-cache.db' % (os.path.dirname(os.path.realpath(__file__))))
+    except Exception, e:
+        print "There was an error connecting to the cache database."
+        print str(e)
+        sys.exit()
+
+
+def zabbix_fail():
+
+    print "ZBX_NOTSUPPORTED"
+    sys.exit(1)
+
+
+def getConfigs():
+
+    try:
+
+        stream = open("%s/config.yml" % (os.path.dirname(os.path.realpath(__file__))), "r")
+        return yaml.load(stream)
+
+    except Exception, e:
+
+        print "Could not find the config.yml file."
+        sys.exit(1)
+
+
+def callApi(path, host, port, username, password):
+
+    try:
+
+        url = 'http://%s:%s%s' % (host,str(port), path)
+        r = requests.get(url, auth=(username, password))
+
+    except Exception, e:
+
+        logging.error('failed while retrieving api data from "%s": %s' % (url,str(e)))
+        zabbix_fail()
+
+    if r.status_code == 200:
+        return json.loads(r.text)
+
+    else:
+
+        logging.error('api return code was not 200: %i' % (r.status_code))
+        zabbix_fail()
+
+
+def main():
+
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--hostname', required=True, help='the hostname of the rabbitmq server')
+    parser.add_argument('--log-level', required=False, default="ERROR",choices=['DEBUG','INFO','ERROR','WARN'], help='the hostname of the rabbitmq server')
+    subparsers=parser.add_subparsers(dest="command")
+    discover_sub=subparsers.add_parser("discover")
+    discover_group = discover_sub.add_mutually_exclusive_group()
+    discover_group.add_argument('--queues', action='store_true')
+    discover_group.add_argument('--cluster-nodes', action='store_true')
+    check_sub=subparsers.add_parser("check")
+    check_sub_method=check_sub.add_subparsers(dest="check_method")
+    check_sub_method_queue=check_sub_method.add_parser("queue")
+    check_sub_method_queue.add_argument('--vhost')
+    check_sub_method_queue.add_argument('--name')
+    check_sub_method_queue.add_argument('--metric', required=True)
+    check_sub_method_node=check_sub_method.add_parser("node")
+    check_sub_method_node.add_argument('--name')
+    check_sub_method_node.add_argument('--metric', required=True)
+    args = parser.parse_args()
+    configs = getConfigs()
+    logging.basicConfig(filename='%s/zabbix-rabbitmq.log' % (os.path.dirname(os.path.realpath(__file__))), level=logging.getLevelName(args.log_level))
+
+    username = None
+    password = None
+    port = None
+    ttl = None
+
+    try:
+
+        ttl = configs['defaults']['ttl']
+
+    except:
+
+        ttl = 15
+
+    try:
+
+        port = configs['hosts'][args.hostname]['port']
+
+    except:
+
+        try:
+
+            port = configs['defaults']['port']
+
+        except:
+
+            port = 15672
+
+    try:
+
+        username = configs['hosts'][args.hostname]['username']
+
+    except:
+
+        try:
+
+            username = configs['defaults']['username']
+
+        except:
+
+            username = "guest"
+
+    try:
+
+        password = configs['hosts'][args.hostname]['password']
+
+    except:
+
+        try:
+
+            password = configs['defaults']['password']
+
+        except:
+
+            password = "guest"
+
+
+    if args.command == "discover":
+
+        if args.queues:
+
+            queues = []
+            queuesFound = callApi('/api/queues', args.hostname, port, username, password)
+
+            for queue in queuesFound:
+
+                queues.append({'{#HOSTNAME}' : args.hostname, '{#VHOSTNAME}': queue['vhost'], '{#QUEUENAME}': queue['name']})
+
+            print json.dumps({'data': queues})
+
+        if args.cluster_nodes:
+
+            nodes = []
+            nodesFound = callApi('/api/nodes', args.hostname, port, username, password)
+
+            for node in nodesFound:
+
+                nodes.append({'{#HOSTNAME}' : args.hostname, '{#NODENAME}': node['name'] })
+
+            print json.dumps({'data': nodes})
+
+
+    if args.command == "check":
+
+        logging.info('%s - checking  %s %s %s' % (datetime.datetime.now().isoformat(), args.check_method, args.name, args.metric))
+
+        conn = cacheConnect()
+        cur = conn.cursor()
+        cache = cur.execute("SELECT * FROM CACHE WHERE hostname = '%s' and method = '%s'" % (args.hostname, args.check_method)).fetchone()
+
+        if not cache:
+
+            cur.execute("INSERT INTO CACHE (id,hostname,method,timestamp) values (NULL,'%s','%s',0)" % (args.hostname, args.check_method))
+            conn.commit()
+
+        url = None
+
+        if args.check_method == "queue":
+
+            url = '/api/queues/%s' % (urllib.quote_plus(args.vhost))
+
+        if args.check_method == "node":
+
+            url = '/api/nodes'
+
+        if not cache or ( int( time.time() ) - cache[4] ) > ttl:
+
+            data = callApi(url, args.hostname, port, username, password)
+            cur.execute("UPDATE CACHE SET TIMESTAMP=%i, DATA='%s' WHERE HOSTNAME='%s' AND METHOD='%s'  " % (int( time.time() ), json.dumps(data).replace("'","''"), args.hostname, args.check_method))
+            conn.commit()
+
+        else:
+
+            data = json.loads(cache[3])
+
+        conn.close()
+        metric_parts = args.metric.split('.')
+
+        match = False
+
+        for item in data:
+
+            if item['name'] == args.name:
+                data = item
+                match = True
+                break
+
+        if not match:
+               
+            logging.error('the %s name was not found: %s' % (str(args.check_method),str(args.name)))
+            zabbix_fail()
+
+        try:
+
+            while len(metric_parts):
+
+                data = data[metric_parts.pop(0)]
+
+        except Exception as e:
+
+            if args.metric.split('.')[0] == "message_stats" and not args.metric.split('.')[-1].endswith("_details"):
+
+                print 0
+                sys.exit()
+
+            else:
+
+                logging.error('the %s metric was not found or is an object' % (str(args.metric)))
+                zabbix_fail()
+
+        logging.info('%s - returning %s %s %s: %s' % (datetime.datetime.now().isoformat(), str(args.check_method), str(args.name), str(args.metric), str(data)))
+        print data
+
+if __name__ == "__main__": main()
+
+
