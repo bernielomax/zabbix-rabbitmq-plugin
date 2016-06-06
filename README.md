@@ -54,7 +54,7 @@ Username & Password as you would expect.
 
 ##### TTL
 
-How long to store retrieved API metrics in the cache for.
+How long to store retrieved API metrics in the cache for (in seconds).
 
 ##### Port
 
