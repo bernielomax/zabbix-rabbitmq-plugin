@@ -81,20 +81,84 @@ The `zabbix-rabbitmq-template.xml` file contains some basic discovery items, tri
 
 **IMPORTANT** After importing the template make sure you set the the RabbitMQ server hostname on both of the newly imported discovery rules.
 
-## Adding custom items for monitoring
+## Custom Zabbix items
 
-You can add additional custom items to be monitored. This plugin retrieves all information from the from the API call. It then flattens the JSON response into a flattened "dot" separated key value store.
+You can add additional custom items to be monitored. This plugin retrieves all and stores all information when performing a RabbitMQ API call. The response JSON data is then flattened and stored in "dot" separated key value store in the cache. The zabbix plugin uses the cache until the TTL expires and will then refresh the data by performing another API call.
 
-##### For example "/api/queues" returns
+### Zabbix item examples
 
-```
+Below are some examples of the kind of Zabbix item keys that can be used for this plugin:
 
-```
-
-#####An example of the keys available to Zabbix would be
+##### For a node
 
 ```
+rabbitmq.check.node[my-host.example.com,rabbit@my-host,disk_free]
+```
 
+##### For a queue
+
+```
+rabbitmq.check.queue[my-host.example.com,/,myqueue,consumers]
+```
+
+### Adding additional Zabbix items
+
+The last column in the previous item key examples references the dot separated value that was retrieved from the associated RabbitMQ API call (in the case above its either a node a queue call). Below is an example of a RabbitMQ API response snippet with an additional trailing example of how the plugin mutates the key values and stores them in the cache for Zabbix to report on.
+
+##### The "/api/nodes" returns the following snippet
+
+```
+{
+  partitions: [ ],
+  os_pid: "26362",
+  fd_used: 349,
+  fd_total: 65536,
+  sockets_used: 312,
+  sockets_total: 58890,
+  mem_used: 3449219600,
+  mem_limit: 40515030220,
+  mem_alarm: false,
+  disk_free_limit: 50000000,
+  disk_free: 1789444382720,
+  disk_free_alarm: false,
+  proc_used: 8407,
+  proc_total: 1048576,
+  statistics_level: "fine",
+  uptime: 10271980381,
+  run_queue: 0,
+  processors: 16,
+  exchange_types: [
+    {
+      name: "topic",
+      description: "AMQP topic exchange, as per the AMQP specification",
+      enabled: true
+    },
+```
+
+##### Would be flattened into the following and stored in the cache
+
+```
+partitions=""
+os_pid= 26362
+fd_used=349
+fd_total=65536
+sockets_used=312
+sockets_total=58890
+mem_used=3449219600
+mem_limit=40515030220
+mem_alarm="false"
+disk_free_limit=50000000
+disk_free=1789444382720
+disk_free_alarm="fine"
+proc_used=8407
+proc_total=1048576
+statistics_level="fine"
+uptime=10271980381
+run_queue=0
+processors=16
+exchange_types.0.name="topic"
+exchange_types.0.description="AMQP topic exchange, as per the AMQP specification"
+exchange_types.0.enabled="true"
 ```
 
 ## The cache schema
@@ -103,11 +167,11 @@ The cache resides in a SQLite file called `zabbix-rabbitmq-cache.db`. Below is a
 
 ```
 CREATE TABLE CACHE(
-   ID INTEGER PRIMARY KEY,
-   HOSTNAME           CHAR(50) NOT NULL,
-   METHOD         CHAR(50) NOT NULL,
-   DATA           TEXT, 
-   TIMESTAMP      INT      NOT NULL
+   ID               INTEGER      PRIMARY KEY,
+   HOSTNAME         CHAR(50)     NOT NULL,
+   METHOD           CHAR(50)     NOT NULL,
+   DATA             TEXT, 
+   TIMESTAMP        INT          NOT NULL
 );
 ```
 
