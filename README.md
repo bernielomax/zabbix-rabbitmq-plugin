@@ -75,7 +75,7 @@ defaults:
 
 ```
 
-### 4. Import the template
+### 5. Import the template
 
 The `zabbix-rabbitmq-template.xml` file contains some basic discovery items, triggers and graphs. The template can be imported by going to the ***"Configuration/Templates"*** page in the Zabbix web console and by clicking the ***"import"*** button. 
 
