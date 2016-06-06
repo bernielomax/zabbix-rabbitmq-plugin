@@ -36,7 +36,7 @@ UserParameter=rabbitmq.check.node[*],/etc/zabbix/scripts/zabbix-rabbitmq-plugin/
 service zabbix restart
 ```
 
-### 3. Set the plugin configuration
+### 4. Set the plugin configuration
 
 The `config.yml` contains the settings used to connect to the RabbitMQ server. Below explains how to setup your config file.
 
